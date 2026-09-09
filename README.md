@@ -9,7 +9,7 @@ Give Claude, Cursor, or any MCP client a real Chrome in the cloud. Read pages th
 `fetch`, fill forms, take screenshots, and hand the browser to a person when a login or a CAPTCHA
 needs one. The browser is run by [Steel](https://steel.dev).
 
-**Status:** `2.0.1`. Download it from [Releases](https://github.com/steel-dev/steel-mcp-server/releases/latest).
+**Status:** `3.0.0`. Download it from [Releases](https://github.com/steel-dev/steel-mcp-server/releases/latest).
 It is not published to npm. `mcp.steel.dev` is not live yet.
 
 ## Install
@@ -134,7 +134,7 @@ three, which never start a browser.
 | `STEEL_PROFILE` | `browse` | `browse` or `scrape` |
 | `STEEL_SESSION_TIMEOUT_MS` | `900000` | Default immutable session lifetime. A create request may choose up to 24 hours, within the account maximum |
 | `STEEL_INACTIVITY_TIMEOUT_MS` | `600000` | Idle release. Long enough for a handoff, so an abandoned browser can live about 10 minutes |
-| `STEEL_MAX_SESSIONS` | `10` | Concurrent sessions this server will hold |
+| `STEEL_MAX_SESSIONS` | `10` | Live sessions plus pending creates per credential; enforced across replicas when using Redis |
 | `STEEL_CONNECT_URL` | `wss://connect.steel.dev` | CDP endpoint, derived from the base URL when self-hosted |
 
 Logs are structured JSON on stderr; stdout carries nothing but JSON-RPC. The hosted endpoint has its

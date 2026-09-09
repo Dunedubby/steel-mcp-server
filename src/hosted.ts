@@ -104,7 +104,7 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
     });
 
     const runtime = new HostedRuntime({
-        configForCredential: credential => loadConfig({ ...env, STEEL_API_KEY: credential }),
+        configForCredential: credential => ({ ...template, apiKey: credential }),
         createRegistry: backend.createRegistry,
         onReapError: error => log('error', 'reaper failed to release a session', { error: String(error) }),
         onReleased: (cause, registryBackend) => {
@@ -145,9 +145,12 @@ export async function startHostedServer(options: HostedServerOptions): Promise<H
     });
 
     const reaper = setInterval(() => {
-        void runtime.registry.reap({ idleMs: resolveRegistryIdleMs(template.inactivityTimeoutMs) }).catch(error => {
-            log('error', 'reaper sweep failed', { error: String(error) });
-        });
+        void runtime.registry
+            .reap({ idleMs: resolveRegistryIdleMs(template.inactivityTimeoutMs) })
+            .then(() => runtime.pruneIdleTenants())
+            .catch(error => {
+                log('error', 'reaper sweep failed', { error: String(error) });
+            });
     }, REAPER_INTERVAL_MS);
     reaper.unref();
 

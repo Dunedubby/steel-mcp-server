@@ -42,6 +42,28 @@ The stdio variables from the README (`STEEL_BASE_URL`, `STEEL_PROFILE`, the time
 of its own, so it is the deployment's job to terminate TLS in front of it. Hosted logs are
 structured JSON on stdout, and credentials are redacted before anything reaches them.
 
+## Client retention and session capacity
+
+The hosted runtime retains at most 256 credential/client bundles per process. Modern discovery and
+catalog requests do not add callers to this cache. The reaper evicts bundles idle for five minutes
+only when they have no active tool call or tracked browser session, including a pending human
+handoff. When full, existing callers remain usable; new tool callers must retry after idle clients
+are reclaimed. Custom runtimes can set `HostedRuntimeOptions.maxTenants` and `tenantIdleMs` and
+must call `pruneIdleTenants()` alongside the session reaper.
+
+Session capacity includes pending creates, so simultaneous calls cannot exceed `STEEL_MAX_SESSIONS`.
+With Redis, reservations are shared across replicas and expire at the session's hard deadline if a
+process disappears. A failed create frees its reservation after Steel confirms cleanup; if cleanup
+cannot be confirmed, the reservation stays until the deadline.
+
+The entrypoint keeps its request-state signing key stable across client eviction, so a session plan
+can still be used after an idle client bundle is recreated. Custom `configForCredential` callbacks
+must likewise supply a stable `requestStateSecret`.
+
+Process-owned shutdown attempts every browser release, including sessions under human control,
+and closes every pool before reporting cleanup failures. Shared Redis shutdown closes this
+replica's pools without releasing other replicas' browsers.
+
 ## Deploying with compose
 
 `docker-compose.yaml` deploys the endpoint on any compose host, Coolify included:

@@ -718,6 +718,7 @@ describe('BrowserPage.act — dismiss_overlays', () => {
             )
         );
         fixture.stub('DOM.getNodeForLocation', () => ({ backendNodeId: 30 }));
+        fixture.stub('Runtime.callFunctionOn', () => ({ result: { value: true } }));
         const browserPage = await openPage(fixture);
 
         const outcome = await browserPage.act({ action: 'dismiss_overlays' });
@@ -927,5 +928,52 @@ describe('BrowserPage.act — inside a frame', () => {
         const outcome = await browserPage.act({ action: 'click', target: ref });
         expect(outcome.change.navigated).toBe(false);
         expect(outcome.changeDescription).not.toMatch(/frame/i);
+    });
+});
+
+describe('review regressions: waits and failed actions', () => {
+    it('requires every supplied wait predicate before claiming success', async () => {
+        const fixture = actionFixture(fixtureSession(page([SAVE_BUTTON], { url: 'https://example.com/checkout' })));
+        const browser = await openPage(fixture);
+        await expect(
+            browser.waitFor({ text: 'Order confirmed', url: '/checkout', timeoutMs: 1 })
+        ).rejects.toMatchObject({ code: 'timeout' });
+        fixture.setPage(page([{ ...SAVE_BUTTON, name: 'Order confirmed' }], { url: 'https://example.com/checkout' }));
+        const result = await browser.waitFor({ text: 'Order confirmed', url: '/checkout', timeoutMs: 100 });
+        expect(result.satisfied).toBe(true);
+        expect(result.condition).toContain('Order confirmed');
+        expect(result.condition).toContain('/checkout');
+    });
+
+    it('removes all settle subscriptions after navigation and dispatch failures', async () => {
+        const fixture = actionFixture(fixtureSession(page([SAVE_BUTTON])), { navigateErrorText: 'net::ERR_FAILED' });
+        const browser = await openPage(fixture);
+        const events = [
+            'Page.frameStartedNavigating',
+            'Page.loadEventFired',
+            'Page.frameNavigated',
+            'Page.frameStoppedLoading',
+        ];
+        const baseline = events.map(event => fixture.listenerCount(event));
+        for (let attempt = 0; attempt < 3; attempt++) {
+            await expect(browser.navigate('https://example.com/')).rejects.toBeDefined();
+            await expect(browser.act({ action: 'press', value: 'InvalidKey' })).rejects.toMatchObject({
+                code: 'invalid_argument',
+            });
+            expect(events.map(event => fixture.listenerCount(event))).toEqual(baseline);
+        }
+        fixture.stub('DOM.focus', () => {
+            throw new Error('Detached field');
+        });
+        await browser.snapshot({});
+        await expect(browser.act({ action: 'type', target: '@e1', value: 'hello' })).rejects.toBeDefined();
+        expect(events.map(event => fixture.listenerCount(event))).toEqual(baseline);
+    });
+
+    it('does not treat an ordinary Continue button as an overlay', async () => {
+        const fixture = actionFixture(fixtureSession(page([{ ...SAVE_BUTTON, name: 'Continue to payment' }])));
+        const browser = await openPage(fixture);
+        await browser.act({ action: 'dismiss_overlays' });
+        expect(fixture.sent.filter(call => call.method === 'Input.dispatchMouseEvent')).toEqual([]);
     });
 });
