@@ -418,18 +418,21 @@ export class RedisHandleRegistry implements HandleRegistry {
         }
         try {
             await this.deps.releaseSteelSession(record.steelSessionId, record.principal);
+            await this.releaseLedgers(record);
+            if (await this.forget(principal, handle)) this.finalized(path);
         } catch (error) {
             await this.commands.compareDelete(this.controlKey(handle), marker);
             throw error;
         }
-        if (await this.forget(principal, handle)) {
-            await this.releaseSessionSlot(principal, record.steelSessionId);
-            if (record.mitigation.persistProfile && record.mitigation.profileId) {
-                await this.releaseProfileWriter(record.principal, record.mitigation.profileId, record.steelSessionId);
-            }
-            this.finalized(path);
-        }
         return record;
+    }
+
+    /** Keep the handle indexed until both ledgers are clean, so any replica can retry a failure. */
+    private async releaseLedgers(record: HandleRecord): Promise<void> {
+        await this.releaseSessionSlot(record.principal, record.steelSessionId);
+        if (record.mitigation.persistProfile && record.mitigation.profileId) {
+            await this.releaseProfileWriter(record.principal, record.mitigation.profileId, record.steelSessionId);
+        }
     }
 
     async list(principal: string): Promise<HandleRecord[]> {
@@ -499,9 +502,8 @@ export class RedisHandleRegistry implements HandleRegistry {
     /**
      * Sweeps every principal's handles, releasing the idle and the expired.
      *
-     * Replicas sweep concurrently and are deliberately not coordinated: releasing a session is
-     * idempotent on both sides — Steel tolerates a repeat release, and only the replica whose
-     * `del` removed the record counts one — so a lock would buy nothing but a new failure mode.
+     * A short-lived control marker fences concurrent releases. Steel release and ledger cleanup
+     * are idempotent so failures can be retried; only removal of the record counts a release.
      */
     async reap(options: ReapOptions): Promise<number> {
         const now = this.now().getTime();
@@ -533,15 +535,8 @@ export class RedisHandleRegistry implements HandleRegistry {
             try {
                 if (!(await this.commands.setIfAbsent(this.controlKey(handle), marker, 120_000))) continue;
                 await this.deps.releaseSteelSession(record.steelSessionId, record.principal);
+                await this.releaseLedgers(record);
                 if (await this.forget(record.principal, handle)) {
-                    await this.releaseSessionSlot(record.principal, record.steelSessionId);
-                    if (record.mitigation.persistProfile && record.mitigation.profileId) {
-                        await this.releaseProfileWriter(
-                            record.principal,
-                            record.mitigation.profileId,
-                            record.steelSessionId
-                        );
-                    }
                     this.finalized(expired ? 'hard_expiry' : 'idle');
                     reaped += 1;
                 }
