@@ -151,6 +151,7 @@ async function withDeadline<T>(work: Promise<T>, ms: number, onTimeout: T): Prom
 
 /** A settle pass that has already subscribed, so no event between now and `finish` is lost. */
 export interface SettleWatch {
+    dispose(): void;
     finish(): Promise<SettleResult>;
 }
 
@@ -212,7 +213,14 @@ export function watchForSettle(session: CdpSession, options: SettleOptions): Set
         onComplete?.();
     });
 
+    const dispose = () => {
+        offStarted();
+        offLoad();
+        offNavigated();
+        offStopped();
+    };
     return {
+        dispose,
         async finish(): Promise<SettleResult> {
             let timedOut = false;
             try {
@@ -222,10 +230,7 @@ export function watchForSettle(session: CdpSession, options: SettleOptions): Set
                     timedOut ||= outcome.timedOut;
                 }
             } finally {
-                offStarted();
-                offLoad();
-                offNavigated();
-                offStopped();
+                dispose();
             }
 
             let domMutated: boolean;

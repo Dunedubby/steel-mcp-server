@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSteelMcpServer } from '../../src/core/server.js';
 import { MAX_INLINE_SCREENSHOT_BYTES } from '../../src/core/tools/stateless.js';
 import { UNTRUSTED_FENCE_CLOSE, UNTRUSTED_FENCE_OPEN_TAG } from '../../src/core/untrusted.js';
@@ -2037,5 +2037,76 @@ describe('steel_batch', () => {
         expect(isError(result)).toBe(true);
         expect(textOf(result)).toMatch(/step 1/i);
         expect(textOf(result)).not.toMatch(/step 2/i);
+    });
+});
+
+describe('page metadata fencing', () => {
+    it('fences titles in snapshot, navigation and release responses', async () => {
+        const handle = await newSession();
+        const record = await harness.deps.registry.resolve(handle, harness.deps.principal);
+        await harness.deps.pool.page(record.steelSessionId);
+        const fixture = harness.deps.pool.fixtureFor(record.steelSessionId)!;
+        const title = 'TITLE_FENCE_MARKER';
+        fixture.stub('Runtime.evaluate', params => ({
+            result: { value: params.expression === 'document.title' ? title : false },
+        }));
+        fixture.stub('Accessibility.getFullAXTree', () => ({
+            nodes: [{ nodeId: 'root', backendDOMNodeId: 1, role: { value: 'RootWebArea' }, name: { value: title } }],
+        }));
+        for (const name of ['steel_snapshot', 'steel_navigate', 'steel_session_release']) {
+            const result = await harness.client.callTool({
+                name,
+                arguments: {
+                    session_id: handle,
+                    ...(name === 'steel_navigate' ? { url: 'https://example.com/' } : {}),
+                },
+            });
+            expect(isError(result)).toBe(false);
+            const text = textOf(result);
+            expect(text).toContain(title);
+            for (const match of text.matchAll(/TITLE_FENCE_MARKER/g)) {
+                expect(text.lastIndexOf(UNTRUSTED_FENCE_OPEN_TAG, match.index)).toBeGreaterThan(
+                    text.lastIndexOf(UNTRUSTED_FENCE_CLOSE, match.index)
+                );
+            }
+            const structured = result.structuredContent as Record<string, unknown> | undefined;
+            expect(structured?.title).toBeUndefined();
+        }
+    });
+});
+
+describe('concurrent session creation', () => {
+    it('restores the slot after a failed create is cleaned up', async () => {
+        harness.deps.config.maxConcurrentSessions = 1;
+        const create = vi.spyOn(harness.deps.api, 'createSession').mockRejectedValueOnce(new Error('response lost'));
+        const failed = await harness.client.callTool({ name: 'steel_session_create', arguments: { guest: true } });
+        expect(isError(failed)).toBe(true);
+        expect(harness.deps.api.released).toHaveLength(1);
+        const retry = await harness.client.callTool({ name: 'steel_session_create', arguments: { guest: true } });
+        expect(isError(retry)).toBe(false);
+        expect(create).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps an uncertain create reserved when upstream cleanup fails', async () => {
+        harness.deps.config.maxConcurrentSessions = 1;
+        const create = vi.spyOn(harness.deps.api, 'createSession').mockRejectedValueOnce(new Error('response lost'));
+        vi.spyOn(harness.deps.api, 'releaseSession').mockRejectedValueOnce(new Error('cleanup unavailable'));
+        const failed = await harness.client.callTool({ name: 'steel_session_create', arguments: { guest: true } });
+        expect(isError(failed)).toBe(true);
+        const retry = await harness.client.callTool({ name: 'steel_session_create', arguments: { guest: true } });
+        expect(retry.structuredContent).toMatchObject({ error: { code: 'rate_limited' } });
+        expect(create).toHaveBeenCalledOnce();
+    });
+
+    it('reserves the configured slot before any upstream create', async () => {
+        harness.deps.config.maxConcurrentSessions = 1;
+        const results = await Promise.all(
+            Array.from({ length: 3 }, () =>
+                harness.client.callTool({ name: 'steel_session_create', arguments: { guest: true } })
+            )
+        );
+        expect(results.filter(result => !isError(result))).toHaveLength(1);
+        expect(harness.deps.api.created).toHaveLength(1);
+        expect(await harness.deps.registry.countLive(harness.deps.principal)).toBe(1);
     });
 });

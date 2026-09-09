@@ -1,5 +1,6 @@
 // ABOUTME: Redis-backed handle registry: interchangeable replicas share one set of session handles,
 // ABOUTME: behind a narrow command interface and with the same semantics as the in-memory backend.
+import { SteelToolError } from './errors.js';
 import {
     type CreateHandleInput,
     type HandleRecord,
@@ -422,6 +423,7 @@ export class RedisHandleRegistry implements HandleRegistry {
             throw error;
         }
         if (await this.forget(principal, handle)) {
+            await this.releaseSessionSlot(principal, record.steelSessionId);
             if (record.mitigation.persistProfile && record.mitigation.profileId) {
                 await this.releaseProfileWriter(record.principal, record.mitigation.profileId, record.steelSessionId);
             }
@@ -445,6 +447,53 @@ export class RedisHandleRegistry implements HandleRegistry {
 
     async countLive(principal: string): Promise<number> {
         return (await this.list(principal)).length;
+    }
+
+    /** CAS keeps pending creations and live sessions in one expiring per-principal capacity ledger. */
+    private async updateSessionSlots(
+        principal: string,
+        update: (slots: Map<string, number>) => boolean
+    ): Promise<boolean> {
+        const key = `${this.prefix}:capacity:${principal}`;
+        for (let attempt = 0; attempt < 32; attempt++) {
+            const raw = await this.commands.get(key);
+            const now = this.now().getTime();
+            const slots = new Map<string, number>(raw === null ? [] : JSON.parse(raw));
+            for (const [id, until] of slots) if (until <= now) slots.delete(id);
+            if (!update(slots)) return false;
+            if (slots.size === 0) {
+                if (raw === null || (await this.commands.compareDelete(key, raw))) return true;
+                continue;
+            }
+            const value = JSON.stringify([...slots]);
+            const ttl = Math.max(1, ...[...slots.values()].map(until => until - now));
+            const changed =
+                raw === null
+                    ? await this.commands.setIfAbsent(key, value, ttl)
+                    : await this.commands.compareSet(key, raw, value, ttl);
+            if (changed) return true;
+        }
+        throw new SteelToolError('Session capacity is busy. Retry this request.', { code: 'rate_limited' });
+    }
+
+    async reserveSessionSlot(principal: string, owner: string, expiresAt: number, limit: number): Promise<boolean> {
+        // Include records created before capacity reservations were introduced. A stale release read
+        // can conservatively hold a slot until hard expiry, but can never admit an extra browser.
+        const live = await this.list(principal);
+        return this.updateSessionSlots(principal, slots => {
+            const now = this.now().getTime();
+            for (const record of live) if (record.expiresAt > now) slots.set(record.steelSessionId, record.expiresAt);
+            if (expiresAt <= now || (!slots.has(owner) && slots.size >= limit)) return false;
+            slots.set(owner, expiresAt);
+            return true;
+        });
+    }
+
+    async releaseSessionSlot(principal: string, owner: string): Promise<void> {
+        await this.updateSessionSlots(principal, slots => {
+            slots.delete(owner);
+            return true;
+        });
     }
 
     /**
@@ -485,6 +534,7 @@ export class RedisHandleRegistry implements HandleRegistry {
                 if (!(await this.commands.setIfAbsent(this.controlKey(handle), marker, 120_000))) continue;
                 await this.deps.releaseSteelSession(record.steelSessionId, record.principal);
                 if (await this.forget(record.principal, handle)) {
+                    await this.releaseSessionSlot(record.principal, record.steelSessionId);
                     if (record.mitigation.persistProfile && record.mitigation.profileId) {
                         await this.releaseProfileWriter(
                             record.principal,

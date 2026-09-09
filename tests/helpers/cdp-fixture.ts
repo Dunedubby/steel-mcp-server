@@ -279,6 +279,7 @@ export interface FixtureSession {
     session: CdpSession;
     sent: Array<{ method: string; params: Record<string, unknown> }>;
     emit(event: string, params: CdpEventParams): void;
+    listenerCount(event: string): number;
     /** Replaces the page the fixture serves, modelling a navigation or a DOM change. */
     setPage(page: FixturePage): void;
     /** Canned answers for methods the pipeline calls but the fixture does not model. */
@@ -342,6 +343,7 @@ export function fixtureSession(initialPage: FixturePage): FixtureSession {
     return {
         session,
         sent,
+        listenerCount: event => listeners.get(event)?.size ?? 0,
         emit(event, params) {
             for (const listener of listeners.get(event) ?? []) listener(params);
         },

@@ -1104,3 +1104,30 @@ describe('the 2025 wire era', () => {
         expect(result.content).toEqual(expectedLoginError().content);
     });
 });
+
+describe('URL-only Apps handoff fallback', () => {
+    it.each(['steel_session_handoff', 'steel_navigate'])(
+        'uses URL elicitation for %s when form support is absent',
+        async name => {
+            const harness = await connectModern({
+                deps: testDeps({ page: name === 'steel_navigate' ? loginWallPage : plainPage }),
+                capabilities: { extensions: { [UI_EXTENSION_NAME]: {} }, elicitation: { url: {} } },
+                autoFulfill: false,
+            });
+            const handle = await newSession(harness);
+            const result = await harness.client.callTool(
+                {
+                    name,
+                    arguments: {
+                        session_id: handle,
+                        ...(name === 'steel_navigate' ? { url: 'https://app.test/login' } : { reason: 'review' }),
+                    },
+                },
+                { allowInputRequired: true }
+            );
+            const input = result as unknown as { inputRequests?: Record<string, { params: UrlElicitation }> };
+            expect(input.inputRequests?.[HANDOFF_KEY]?.params.mode).toBe('url');
+            expect(input.inputRequests?.[HANDOFF_KEY]?.params.url).toContain('/player');
+        }
+    );
+});

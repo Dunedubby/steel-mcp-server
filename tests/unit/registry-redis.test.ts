@@ -684,8 +684,7 @@ describe('RedisHandleRegistry across replicas', () => {
     });
 
     it('counts one release when two replicas sweep the same handle at once', async () => {
-        // No distributed lock: whichever replica deletes the record wins, and the loser must not
-        // count a release it did not perform.
+        // Atomic SET-NX release fencing admits one sweep; the loser neither releases nor counts.
         const { first, second, store, clock } = twoReplicas();
         await first.registry.create({ principal: ORG_A, steelSessionId: 'steel-1', expiresAt: clock.ms + 600_000 });
         clock.advance(200_000);
@@ -695,10 +694,7 @@ describe('RedisHandleRegistry across replicas', () => {
             second.registry.reap({ idleMs: 120_000 }),
         ]);
 
-        expect(
-            [...first.released, ...second.released],
-            'the two sweeps did not overlap, so the race was never exercised'
-        ).toEqual(['steel-1', 'steel-1']);
+        expect([...first.released, ...second.released]).toEqual(['steel-1']);
         expect(reapedByFirst + reapedBySecond, 'the same handle was reaped twice').toBe(1);
         const counts = first.registry.releaseCounts().idle + second.registry.releaseCounts().idle;
         expect(counts, 'two replicas both counted the one release').toBe(1);

@@ -104,7 +104,7 @@ const NAMED_KEYS: Record<string, { code: string; keyCode: number; text?: string 
 
 /** Accessible names that identify a consent or cookie overlay's dismiss control. */
 const OVERLAY_DISMISS_NAMES =
-    /^(accept|agree|allow|got it|ok|okay|dismiss|close|continue|i understand|no thanks|reject)\b|cookies?$/i;
+    /^(accept(?: all)?(?: cookies)?|reject(?: all)?(?: cookies)?|got it|ok|okay|dismiss|close|i understand|no thanks)$/i;
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
 const WAIT_POLL_INTERVAL_MS = 250;
@@ -294,21 +294,25 @@ export class BrowserPage {
     async navigate(url: string): Promise<NavigateOutcome> {
         const beforeLoader = (await this.currentFrame()).loaderId;
         const baseline = await this.beginChange();
-        const result = await this.session.send<{ errorText?: string }>('Page.navigate', { url });
-        // errorText is CDP's only failure signal. The page still ends up on Chrome's error
-        // document, so ignoring it reports a DNS or connection failure as a successful load.
-        if (result.errorText) throw navigationFailedError(url, result.errorText);
+        try {
+            const result = await this.session.send<{ errorText?: string }>('Page.navigate', { url });
+            // errorText is CDP's only failure signal. The page still ends up on Chrome's error
+            // document, so ignoring it reports a DNS or connection failure as a successful load.
+            if (result.errorText) throw navigationFailedError(url, result.errorText);
 
-        const { change, description } = await this.settleNow(baseline);
-        const frame = await this.currentFrame();
-        if (frame.loaderId && frame.loaderId !== beforeLoader) this.clearClickFailures();
-        return {
-            // The frame tree is authoritative for the main frame; the settle signal is a fallback.
-            finalUrl: frame.url || change.navigatedToUrl || url,
-            title: await this.readTitle(),
-            change,
-            changeDescription: description,
-        };
+            const { change, description } = await this.settleNow(baseline);
+            const frame = await this.currentFrame();
+            if (frame.loaderId && frame.loaderId !== beforeLoader) this.clearClickFailures();
+            return {
+                // The frame tree is authoritative for the main frame; the settle signal is a fallback.
+                finalUrl: frame.url || change.navigatedToUrl || url,
+                title: await this.readTitle(),
+                change,
+                changeDescription: description,
+            };
+        } finally {
+            baseline.dispose();
+        }
     }
 
     private async readTitle(): Promise<string> {
@@ -667,28 +671,36 @@ export class BrowserPage {
                 const handle = await this.resolveTarget(this.requireTarget(request));
                 const point = await this.reachablePoint(handle);
                 const baseline = await this.beginChange(handle);
-                await this.clickAt(point);
-                const { change, description } = await this.settleNow(baseline, false, handle);
-                if (change.navigated || change.domMutated || change.focusChanged) {
-                    this.clearClickFailures();
-                } else if (!change.frameUnobserved && this.markClickFailure(handle).repeated) {
-                    // Inside a frame, silence is not evidence: the frame's own DOM is not observed,
-                    // so a quiet click there is neither a success nor a failure to count.
-                    throw clickNoObservedChangeError(handle.describe);
+                try {
+                    await this.clickAt(point);
+                    const { change, description } = await this.settleNow(baseline, false, handle);
+                    if (change.navigated || change.domMutated || change.focusChanged) {
+                        this.clearClickFailures();
+                    } else if (!change.frameUnobserved && this.markClickFailure(handle).repeated) {
+                        // Inside a frame, silence is not evidence: the frame's own DOM is not observed,
+                        // so a quiet click there is neither a success nor a failure to count.
+                        throw clickNoObservedChangeError(handle.describe);
+                    }
+                    return { summary: `Clicked ${handle.describe}.`, change, changeDescription: description };
+                } finally {
+                    baseline.dispose();
                 }
-                return { summary: `Clicked ${handle.describe}.`, change, changeDescription: description };
             }
             case 'hover': {
                 const handle = await this.resolveTarget(this.requireTarget(request));
                 const point = await this.centreOf(handle);
                 const baseline = await this.beginChange(handle);
-                await this.session.send('Input.dispatchMouseEvent', {
-                    type: 'mouseMoved',
-                    x: Math.round(point.x),
-                    y: Math.round(point.y),
-                });
-                const { change, description } = await this.settleNow(baseline, false, handle);
-                return { summary: `Hovered ${handle.describe}.`, change, changeDescription: description };
+                try {
+                    await this.session.send('Input.dispatchMouseEvent', {
+                        type: 'mouseMoved',
+                        x: Math.round(point.x),
+                        y: Math.round(point.y),
+                    });
+                    const { change, description } = await this.settleNow(baseline, false, handle);
+                    return { summary: `Hovered ${handle.describe}.`, change, changeDescription: description };
+                } finally {
+                    baseline.dispose();
+                }
             }
             case 'type': {
                 if (request.value === undefined) {
@@ -696,10 +708,18 @@ export class BrowserPage {
                 }
                 const handle = await this.resolveTarget(this.requireTarget(request));
                 const baseline = await this.beginChange(handle);
-                await this.typeInto(handle, request.value);
-                const { change, description } = await this.settleNow(baseline, true, handle);
-                this.clearClickFailures();
-                return { summary: this.describeTyped(handle, request.value), change, changeDescription: description };
+                try {
+                    await this.typeInto(handle, request.value);
+                    const { change, description } = await this.settleNow(baseline, true, handle);
+                    this.clearClickFailures();
+                    return {
+                        summary: this.describeTyped(handle, request.value),
+                        change,
+                        changeDescription: description,
+                    };
+                } finally {
+                    baseline.dispose();
+                }
             }
             case 'fill_form': {
                 if (!request.fields?.length) {
@@ -713,15 +733,19 @@ export class BrowserPage {
                 for (const field of request.fields) handles.push(await this.resolveTarget(field.target));
                 const framed = handles.find(handle => this.inChildFrame(handle));
                 const baseline = await this.beginChange(framed);
-                const summaries: string[] = [];
-                for (const [at, field] of request.fields.entries()) {
-                    const handle = handles[at]!;
-                    await this.typeInto(handle, field.value);
-                    summaries.push(this.describeTyped(handle, field.value));
+                try {
+                    const summaries: string[] = [];
+                    for (const [at, field] of request.fields.entries()) {
+                        const handle = handles[at]!;
+                        await this.typeInto(handle, field.value);
+                        summaries.push(this.describeTyped(handle, field.value));
+                    }
+                    const { change, description } = await this.settleNow(baseline, true, framed);
+                    this.clearClickFailures();
+                    return { summary: summaries.join(' '), change, changeDescription: description };
+                } finally {
+                    baseline.dispose();
                 }
-                const { change, description } = await this.settleNow(baseline, true, framed);
-                this.clearClickFailures();
-                return { summary: summaries.join(' '), change, changeDescription: description };
             }
             case 'select': {
                 if (request.value === undefined) {
@@ -734,32 +758,40 @@ export class BrowserPage {
                     backendNodeId: handle.backendNodeId,
                 });
                 const baseline = await this.beginChange(handle);
-                await this.session.send('Runtime.callFunctionOn', {
-                    objectId: resolved.object?.objectId,
-                    functionDeclaration:
-                        'function(value) { this.value = value; this.dispatchEvent(new Event("input", { bubbles: true })); this.dispatchEvent(new Event("change", { bubbles: true })); }',
-                    arguments: [{ value: request.value }],
-                });
-                const { change, description } = await this.settleNow(baseline, false, handle);
-                this.clearClickFailures();
-                return {
-                    summary: `Selected "${request.value}" in ${handle.describe}.`,
-                    change,
-                    changeDescription: description,
-                };
+                try {
+                    await this.session.send('Runtime.callFunctionOn', {
+                        objectId: resolved.object?.objectId,
+                        functionDeclaration:
+                            'function(value) { this.value = value; this.dispatchEvent(new Event("input", { bubbles: true })); this.dispatchEvent(new Event("change", { bubbles: true })); }',
+                        arguments: [{ value: request.value }],
+                    });
+                    const { change, description } = await this.settleNow(baseline, false, handle);
+                    this.clearClickFailures();
+                    return {
+                        summary: `Selected "${request.value}" in ${handle.describe}.`,
+                        change,
+                        changeDescription: description,
+                    };
+                } finally {
+                    baseline.dispose();
+                }
             }
             case 'scroll': {
                 const amount = Number.parseInt(request.value ?? '600', 10);
                 const baseline = await this.beginChange();
-                await this.session.send('Input.dispatchMouseEvent', {
-                    type: 'mouseWheel',
-                    x: 10,
-                    y: 10,
-                    deltaX: 0,
-                    deltaY: Number.isFinite(amount) ? amount : 600,
-                });
-                const { change, description } = await this.settleNow(baseline);
-                return { summary: `Scrolled by ${amount}px.`, change, changeDescription: description };
+                try {
+                    await this.session.send('Input.dispatchMouseEvent', {
+                        type: 'mouseWheel',
+                        x: 10,
+                        y: 10,
+                        deltaX: 0,
+                        deltaY: Number.isFinite(amount) ? amount : 600,
+                    });
+                    const { change, description } = await this.settleNow(baseline);
+                    return { summary: `Scrolled by ${amount}px.`, change, changeDescription: description };
+                } finally {
+                    baseline.dispose();
+                }
             }
             case 'press': {
                 if (!request.value) {
@@ -768,9 +800,13 @@ export class BrowserPage {
                     });
                 }
                 const baseline = await this.beginChange();
-                await this.pressKey(request.value);
-                const { change, description } = await this.settleNow(baseline);
-                return { summary: `Pressed ${request.value}.`, change, changeDescription: description };
+                try {
+                    await this.pressKey(request.value);
+                    const { change, description } = await this.settleNow(baseline);
+                    return { summary: `Pressed ${request.value}.`, change, changeDescription: description };
+                } finally {
+                    baseline.dispose();
+                }
             }
             case 'go_back': {
                 const history = await this.session.send<{
@@ -785,11 +821,15 @@ export class BrowserPage {
                 }
                 const beforeLoader = (await this.currentFrame()).loaderId;
                 const baseline = await this.beginChange();
-                await this.session.send('Page.navigateToHistoryEntry', { entryId: previous.id });
-                const { change, description } = await this.settleNow(baseline);
-                const afterLoader = (await this.currentFrame()).loaderId;
-                if (afterLoader && afterLoader !== beforeLoader) this.clearClickFailures();
-                return { summary: 'Went back one page.', change, changeDescription: description };
+                try {
+                    await this.session.send('Page.navigateToHistoryEntry', { entryId: previous.id });
+                    const { change, description } = await this.settleNow(baseline);
+                    const afterLoader = (await this.currentFrame()).loaderId;
+                    if (afterLoader && afterLoader !== beforeLoader) this.clearClickFailures();
+                    return { summary: 'Went back one page.', change, changeDescription: description };
+                } finally {
+                    baseline.dispose();
+                }
             }
             case 'dismiss_overlays':
                 return this.dismissOverlays();
@@ -804,46 +844,85 @@ export class BrowserPage {
         }
     }
 
+    /** Confirms a button belongs to a rendered consent dialog/banner before automatic dismissal. */
+    private async isConsentControl(node: SnapshotNode): Promise<boolean> {
+        if (node.role !== 'button') return false;
+        const { object } = await this.session.send<{ object?: { objectId?: string } }>('DOM.resolveNode', {
+            backendNodeId: node.backendNodeId,
+        });
+        if (!object?.objectId) return false;
+        try {
+            const result = await this.session.send<{ result?: { value?: boolean } }>('Runtime.callFunctionOn', {
+                objectId: object.objectId,
+                functionDeclaration: `function() {
+                    for (let parent = this.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+                        const style = getComputedStyle(parent);
+                        const dialog = parent.matches('dialog,[role="dialog"],[role="alertdialog"],[aria-modal="true"]');
+                        const banner = /cookie|consent/i.test(parent.id + ' ' + parent.className) &&
+                            (style.position === 'fixed' || style.position === 'sticky');
+                        if ((dialog || banner) && /cookies?|consent/i.test((parent.innerText || '').slice(0, 10000))) return true;
+                    }
+                    return false;
+                }`,
+                returnByValue: true,
+            });
+            return result.result?.value === true;
+        } finally {
+            await this.session.send('Runtime.releaseObject', { objectId: object.objectId }).catch(() => undefined);
+        }
+    }
+
     /** Presses Escape and clicks a recognised consent control, if one is on the page. */
     private async dismissOverlays(): Promise<ActOutcome> {
         const baseline = await this.beginChange();
-        await this.pressKey('Escape');
-        const snapshot = await this.snapshot({});
-        const candidate = snapshot.nodes.find(
-            node => node.ref !== undefined && node.inViewport && OVERLAY_DISMISS_NAMES.test(node.name)
-        );
+        try {
+            await this.pressKey('Escape');
+            const snapshot = await this.snapshot({});
+            let candidate: SnapshotNode | undefined;
+            for (const node of snapshot.nodes) {
+                if (
+                    node.ref &&
+                    node.inViewport &&
+                    OVERLAY_DISMISS_NAMES.test(node.name) &&
+                    (await this.isConsentControl(node))
+                ) {
+                    candidate = node;
+                    break;
+                }
+            }
 
-        if (!candidate?.ref) {
+            if (!candidate?.ref) {
+                const { change, description } = await this.settleNow(baseline);
+                return {
+                    summary: 'Pressed Escape. Found no recognised cookie or consent overlay control to click.',
+                    change,
+                    changeDescription: description,
+                };
+            }
+
+            const handle = await this.resolveTarget(candidate.ref);
+            const point = await this.reachablePoint(handle);
+            await this.clickAt(point);
             const { change, description } = await this.settleNow(baseline);
+            this.clearClickFailures();
             return {
-                summary: 'Pressed Escape. Found no recognised cookie or consent overlay control to click.',
+                summary: `Pressed Escape and clicked "${candidate.name}".`,
                 change,
                 changeDescription: description,
             };
+        } finally {
+            baseline.dispose();
         }
-
-        const handle = await this.resolveTarget(candidate.ref);
-        const point = await this.centreOf(handle);
-        await this.clickAt(point);
-        const { change, description } = await this.settleNow(baseline);
-        this.clearClickFailures();
-        return {
-            summary: `Pressed Escape and clicked "${candidate.name}".`,
-            change,
-            changeDescription: description,
-        };
     }
 
     /** Polls until an explicit condition holds. There is deliberately no network-idle wait. */
     async waitFor(request: WaitRequest): Promise<WaitOutcome> {
-        const condition =
-            request.text !== undefined
-                ? `the text "${request.text}" to appear`
-                : request.selector !== undefined
-                  ? `an element matching "${request.selector}" to appear`
-                  : request.url !== undefined
-                    ? `the URL to contain "${request.url}"`
-                    : undefined;
+        const conditions = [
+            request.text === undefined ? undefined : `the text "${request.text}" to appear`,
+            request.selector === undefined ? undefined : `an element matching "${request.selector}" to appear`,
+            request.url === undefined ? undefined : `the URL to contain "${request.url}"`,
+        ].filter((condition): condition is string => condition !== undefined);
+        const condition = conditions.length ? conditions.join(' and ') : undefined;
 
         if (condition === undefined) {
             throw new SteelToolError(
@@ -872,7 +951,7 @@ export class BrowserPage {
     private async conditionHolds(request: WaitRequest): Promise<boolean> {
         if (request.url !== undefined) {
             const frame = await this.currentFrame();
-            return frame.url.includes(request.url);
+            if (!frame.url.includes(request.url)) return false;
         }
         if (request.selector !== undefined) {
             const { root } = await this.session.send<{ root: { nodeId: number } }>('DOM.getDocument', { depth: 0 });
@@ -880,10 +959,13 @@ export class BrowserPage {
                 nodeId: root.nodeId,
                 selector: request.selector,
             });
-            return Boolean(nodeId);
+            if (!nodeId) return false;
         }
-        const snapshot = await this.snapshot({});
-        const needle = (request.text ?? '').toLowerCase();
-        return snapshot.nodes.some(node => node.name.toLowerCase().includes(needle));
+        if (request.text !== undefined) {
+            const snapshot = await this.snapshot({});
+            const needle = request.text.toLowerCase();
+            if (!snapshot.nodes.some(node => node.name.toLowerCase().includes(needle))) return false;
+        }
+        return true;
     }
 }

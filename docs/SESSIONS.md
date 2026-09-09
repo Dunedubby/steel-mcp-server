@@ -80,3 +80,9 @@ For a browser that has already finished, explicitly ask to watch or replay it an
 dashboard UUID to `steel_session_replay`, or omit the UUID to select the latest released session.
 This release returns a sanitized Steel dashboard link. Inline finished-session playback is disabled
 until its browser asset can be hosted immutably without inflating the MCP Apps payload.
+## Page metadata and waits
+
+Page titles are returned in fenced page-state text alongside the page URL. Navigation and release
+results do not repeat the raw title in `structuredContent`; consumers should read the fenced text.
+When `steel_wait_for` receives several conditions (text, selector, URL), all must match before it
+reports success.

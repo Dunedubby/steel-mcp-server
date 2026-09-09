@@ -14,6 +14,7 @@ import { fenceUntrusted } from '../untrusted.js';
 import { resolveManualHandoff } from './handoff.js';
 import {
     cursorSchema,
+    fencedPageState,
     maxTokensSchema,
     pageStateLine,
     sessionIdSchema,
@@ -102,15 +103,13 @@ export function registerNavigate(host: ToolHost, deps: ServerDeps): void {
                 return successResult(
                     {
                         result: `Opened ${args.url}.`,
-                        pageState:
-                            sections?.pageState ?? `${outcome.finalUrl}${outcome.title ? ` — ${outcome.title}` : ''}`,
+                        pageState: sections?.pageState ?? fencedPageState(outcome.finalUrl, outcome.title),
                         change: outcome.changeDescription,
                         snapshot: sections?.snapshot,
                         pagination: sections?.pagination,
                     },
                     {
                         final_url: outcome.finalUrl,
-                        title: outcome.title,
                         navigated: outcome.change.navigated,
                         dom_changed: outcome.change.domMutated,
                     }
@@ -365,7 +364,7 @@ export function registerWaitFor(host: ToolHost, deps: ServerDeps): void {
         'steel_wait_for',
         {
             title: 'Wait for something on the page',
-            description: 'Wait for named text, a CSS selector or URL substring; pass at least one.',
+            description: 'Wait for text, a CSS selector or URL; all supplied conditions must match.',
             annotations: { readOnlyHint: true, openWorldHint: true },
             inputSchema: z
                 .object({

@@ -80,6 +80,9 @@ than the root manifest, so `scripts/pack-mcpb.sh` uses `npm install` inside the 
 
 ## Cutting a release
 
+The 3.0.0 compatibility changes and fixes are documented in
+[the release notes](docs/RELEASE-3.0.0.md).
+
 ```bash
 # 1. On a clean tree, with the checks passing.
 npm run typecheck && npm run lint && npm test && npm run budget && npm run conformance

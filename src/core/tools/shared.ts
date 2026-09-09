@@ -10,7 +10,7 @@ import { DEFAULT_MAX_TOKENS, paginate } from '../pagination.js';
 import type { HandleRecord } from '../registry.js';
 import type { PageSnapshot } from '../snapshot.js';
 import { recordSpanFailure, resolveTracer, withToolCallSpan } from '../telemetry.js';
-import { fenceUntrusted } from '../untrusted.js';
+import { defangMarkdownLinks, fenceUntrusted, stripInvisible } from '../untrusted.js';
 
 /** The `session_id` argument shared by every stateful tool. */
 export const sessionIdSchema = z.string().describe('Live session_id from steel_session_create.');
@@ -67,11 +67,15 @@ export async function guard(
         },
         request._meta,
         async span => {
+            let finish: (() => void) | undefined;
             try {
+                finish = deps.beginTool?.();
                 return await work();
             } catch (error) {
                 recordSpanFailure(span, error);
                 return toolErrorResult(error);
+            } finally {
+                finish?.();
             }
         }
     );
@@ -127,8 +131,14 @@ export function pageStateLine(
         missing === 0
             ? ''
             : ` — ${missing} frame${missing === 1 ? '' : 's'} could not be read, so anything inside is missing`;
-    return `${snapshot.url}${snapshot.title ? ` — ${snapshot.title}` : ''} (snapshot ${snapshot.snapshotId})${frames}`;
+    return fencedPageState(snapshot.url, snapshot.title, ` (snapshot ${snapshot.snapshotId})${frames}`);
 }
 
 export type Sections = EnvelopeSections;
 export { successResult };
+
+/** Page titles and URLs have the same provenance and trust level as the page body. */
+export function fencedPageState(url: string, title: string, suffix = ''): string {
+    const text = defangMarkdownLinks(stripInvisible(`${url}${title ? ` — ${title}` : ''}`)).slice(0, 4096);
+    return fenceUntrusted(`${text}${suffix}`, { finalUrl: stripInvisible(url), fetchedAt: new Date().toISOString() });
+}
