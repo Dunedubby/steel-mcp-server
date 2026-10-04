@@ -132,6 +132,7 @@ three, which never start a browser.
 | `STEEL_LOCAL` | `false` | `true` drives a local steel-browser and waives the API key |
 | `STEEL_BASE_URL` | `https://api.steel.dev` | Steel REST base URL. A trailing `/v1` is fine either way |
 | `STEEL_PROXY_URL` | unset | A proxy every session is bound to, sent as `proxyUrl` (`scheme://user:pass@host:port`). The way to give a self-hosted steel-browser's sessions a proxy: `use_proxy` selects from Steel Cloud's pool, which a local deployment does not have |
+| `STEEL_UPLOAD_ROOTS` | unset | `:`-separated absolute folders whose files the `steel_upload_file` tool may put on a page's file input (hidden and credential-shaped names refused, 25 MB per call). The files are read by this process and handed to the page through CDP, so the browser can run anywhere. Unset, the tool is not listed |
 | `STEEL_PROFILE` | `browse` | `browse` or `scrape` |
 | `STEEL_SESSION_TIMEOUT_MS` | `900000` | Default immutable session lifetime. A create request may choose up to 24 hours, within the account maximum |
 | `STEEL_INACTIVITY_TIMEOUT_MS` | `600000` | Idle release. Long enough for a handoff, so an abandoned browser can live about 10 minutes |

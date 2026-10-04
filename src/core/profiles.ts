@@ -14,6 +14,7 @@ import {
 } from './tools/session.js';
 import { registerSessionOptions } from './tools/session-options.js';
 import { registerPdf, registerScrape, registerScreenshot } from './tools/stateless.js';
+import { registerUploadFile } from './tools/upload.js';
 
 export interface ToolDefinition {
     name: string;
@@ -47,6 +48,9 @@ export const TOOL_TABLE: ToolDefinition[] = [
     { name: 'steel_session_replay', profiles: BROWSE_AND_UP, register: registerSessionReplay },
     { name: 'steel_batch', profiles: BROWSE_AND_UP, register: registerBatch },
     { name: 'steel_session_options', profiles: BROWSE_AND_UP, register: registerSessionOptions },
+    // Appended after upstream's tools so their prefix stays byte-identical; listed only when
+    // STEEL_UPLOAD_ROOTS names at least one folder (see registerUploadFile).
+    { name: 'steel_upload_file', profiles: BROWSE_AND_UP, register: registerUploadFile },
     // Last on purpose. A host filters this one out of the list it shows the model, and appending
     // rather than inserting keeps the prefix every other tool sits in byte-identical.
     { name: 'steel_session_live_view', profiles: BROWSE_AND_UP, register: registerSessionLiveView },

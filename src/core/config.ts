@@ -1,6 +1,7 @@
 // ABOUTME: Reads Steel credentials and deployment settings from the environment and derives the
 // ABOUTME: CDP connect URL, which must always carry a sessionId or Steel starts an untracked session.
 import { randomBytes } from 'node:crypto';
+import { resolve as resolvePath } from 'node:path';
 import { DEFAULT_INACTIVITY_TIMEOUT_MS, DEFAULT_SESSION_TIMEOUT_MS } from './lifecycle.js';
 
 /**
@@ -31,6 +32,13 @@ export interface SteelConfig {
      * own `PROXY_URL` is not applied to sessions. Undefined means the browser's own route.
      */
     proxyUrl: string | undefined;
+    /**
+     * Directories whose files `steel_upload_file` may put on a page's file input, from
+     * `STEEL_UPLOAD_ROOTS` (`:`-separated absolute paths). Empty disables the tool: it is not
+     * listed. Files are read by THIS process and handed to the page through CDP, so the browser
+     * may run anywhere; the roots bound what a page can be given, the way a download gate does.
+     */
+    uploadRoots: string[];
     /** WebSocket origin for CDP connections. */
     connectUrl: string;
     deployment: Deployment;
@@ -154,6 +162,11 @@ export function loadConfig(env: Record<string, string | undefined>): SteelConfig
         apiKey,
         baseUrl,
         proxyUrl: env.STEEL_PROXY_URL?.trim() || undefined,
+        uploadRoots: (env.STEEL_UPLOAD_ROOTS ?? '')
+            .split(':')
+            .map(root => root.trim())
+            .filter(root => root.startsWith('/'))
+            .map(root => resolvePath(root)),
         connectUrl: env.STEEL_CONNECT_URL ?? (deployment === 'cloud' ? CLOUD_CONNECT_URL : toWebSocketUrl(baseUrl)),
         deployment,
         profile: profileName as ProfileName,

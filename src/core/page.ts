@@ -416,6 +416,89 @@ export class BrowserPage {
         return { backendNodeId, loaderId: (await this.currentFrame()).loaderId, node, describe: `"${target}"` };
     }
 
+    /**
+     * Puts files on a file input, as if the user had picked them.
+     *
+     * The bytes travel through CDP and become `File` objects inside the page: a `DataTransfer`
+     * assigned to `input.files`, then `input` and `change` events. That works for a browser in
+     * another container or on another machine, needs nothing on the browser's own disk, and is
+     * what a composer that listens for `change` (the React kind) sees when a person picks a file.
+     * `DOM.setFileInputFiles` was the alternative, and it takes paths on the browser's host.
+     *
+     * `target` is a `@eN` ref or a CSS selector naming the input or an element containing one;
+     * omitted, the page must have exactly one file input.
+     */
+    async setInputFiles(
+        target: string | undefined,
+        files: Array<{ name: string; type: string; base64: string }>
+    ): Promise<{ target: string; accepted: Array<{ name: string; size: number }> }> {
+        let describe = target;
+        if (!target) {
+            const count = await this.session.send<{ result?: { value?: number } }>('Runtime.evaluate', {
+                expression: 'document.querySelectorAll(\'input[type="file"]\').length',
+                returnByValue: true,
+            });
+            const found = count.result?.value ?? 0;
+            if (found !== 1) {
+                throw new SteelToolError(
+                    found === 0
+                        ? 'The page has no file input. Click the control that opens the picker first (it usually reveals or creates one), or pass target.'
+                        : `The page has ${found} file inputs; pass target (a @eN ref or a CSS selector) to say which.`,
+                    { code: 'ref_not_found' }
+                );
+            }
+            target = 'input[type="file"]';
+            describe = 'the page\'s file input';
+        }
+        const handle = await this.resolveTarget(target);
+        const { object } = await this.session.send<{ object?: { objectId?: string } }>('DOM.resolveNode', {
+            backendNodeId: handle.backendNodeId,
+        });
+        if (!object?.objectId) {
+            throw new SteelToolError(`${handle.describe} could not be reached in the page.`, { code: 'ref_not_found' });
+        }
+        try {
+            const result = await this.session.send<{
+                result?: { value?: { error?: string; accepted?: Array<{ name: string; size: number }> } };
+                exceptionDetails?: { text?: string; exception?: { description?: string } };
+            }>('Runtime.callFunctionOn', {
+                objectId: object.objectId,
+                functionDeclaration: `function(files) {
+                    const input = this.matches('input[type="file"]') ? this : this.querySelector('input[type="file"]');
+                    if (!input) return { error: 'not a file input, and none inside it' };
+                    if (files.length > 1 && !input.multiple) return { error: 'this input takes one file' };
+                    const transfer = new DataTransfer();
+                    for (const file of files) {
+                        const binary = atob(file.base64);
+                        const bytes = new Uint8Array(binary.length);
+                        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                        transfer.items.add(new File([bytes], file.name, { type: file.type, lastModified: Date.now() }));
+                    }
+                    input.files = transfer.files;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                    return { accepted: Array.from(input.files, f => ({ name: f.name, size: f.size })) };
+                }`,
+                arguments: [{ value: files }],
+                returnByValue: true,
+            });
+            if (result.exceptionDetails) {
+                const text = result.exceptionDetails.exception?.description ?? result.exceptionDetails.text ?? 'unknown error';
+                throw new SteelToolError(`The page refused the files: ${text}`, { code: 'steel_error' });
+            }
+            const value = result.result?.value;
+            if (!value || value.error) {
+                throw new SteelToolError(`${handle.describe} ${value?.error ?? 'did not take the files'}.`, {
+                    code: 'invalid_argument',
+                    details: { target },
+                });
+            }
+            return { target: describe ?? target, accepted: value.accepted ?? [] };
+        } finally {
+            await this.session.send('Runtime.releaseObject', { objectId: object.objectId }).catch(() => undefined);
+        }
+    }
+
     private requireTarget(request: ActRequest): string {
         if (!request.target) {
             throw new SteelToolError(

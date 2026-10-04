@@ -105,6 +105,29 @@ export declare class BrowserPage {
     private liveIdentity;
     /** Resolves a `@eN` ref or a CSS selector to a backend node id. */
     private resolveTarget;
+    /**
+     * Puts files on a file input, as if the user had picked them.
+     *
+     * The bytes travel through CDP and become `File` objects inside the page: a `DataTransfer`
+     * assigned to `input.files`, then `input` and `change` events. That works for a browser in
+     * another container or on another machine, needs nothing on the browser's own disk, and is
+     * what a composer that listens for `change` (the React kind) sees when a person picks a file.
+     * `DOM.setFileInputFiles` was the alternative, and it takes paths on the browser's host.
+     *
+     * `target` is a `@eN` ref or a CSS selector naming the input or an element containing one;
+     * omitted, the page must have exactly one file input.
+     */
+    setInputFiles(target: string | undefined, files: Array<{
+        name: string;
+        type: string;
+        base64: string;
+    }>): Promise<{
+        target: string;
+        accepted: Array<{
+            name: string;
+            size: number;
+        }>;
+    }>;
     private requireTarget;
     /** Returns safe points inside the target's real content quad after scrolling it into view. */
     private candidatePoints;

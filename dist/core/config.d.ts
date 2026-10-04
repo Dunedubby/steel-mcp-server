@@ -23,6 +23,13 @@ export interface SteelConfig {
      * own `PROXY_URL` is not applied to sessions. Undefined means the browser's own route.
      */
     proxyUrl: string | undefined;
+    /**
+     * Directories whose files `steel_upload_file` may put on a page's file input, from
+     * `STEEL_UPLOAD_ROOTS` (`:`-separated absolute paths). Empty disables the tool: it is not
+     * listed. Files are read by THIS process and handed to the page through CDP, so the browser
+     * may run anywhere; the roots bound what a page can be given, the way a download gate does.
+     */
+    uploadRoots: string[];
     /** WebSocket origin for CDP connections. */
     connectUrl: string;
     deployment: Deployment;
