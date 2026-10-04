@@ -131,6 +131,7 @@ three, which never start a browser.
 | `STEEL_API_KEY` | | Required for Steel Cloud. Never sent to a self-hosted deployment |
 | `STEEL_LOCAL` | `false` | `true` drives a local steel-browser and waives the API key |
 | `STEEL_BASE_URL` | `https://api.steel.dev` | Steel REST base URL. A trailing `/v1` is fine either way |
+| `STEEL_PROXY_URL` | unset | A proxy every session is bound to, sent as `proxyUrl` (`scheme://user:pass@host:port`). The way to give a self-hosted steel-browser's sessions a proxy: `use_proxy` selects from Steel Cloud's pool, which a local deployment does not have |
 | `STEEL_PROFILE` | `browse` | `browse` or `scrape` |
 | `STEEL_SESSION_TIMEOUT_MS` | `900000` | Default immutable session lifetime. A create request may choose up to 24 hours, within the account maximum |
 | `STEEL_INACTIVITY_TIMEOUT_MS` | `600000` | Idle release. Long enough for a handoff, so an abandoned browser can live about 10 minutes |

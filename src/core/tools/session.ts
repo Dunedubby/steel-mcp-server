@@ -266,6 +266,7 @@ export function registerSessionCreate(host: ToolHost, deps: ServerDeps): void {
                                 timeout,
                                 inactivityTimeout,
                                 useProxy: args.use_proxy ?? settings.useProxy,
+                                proxyUrl: deps.config.proxyUrl,
                                 solveCaptcha: args.solve_captcha ?? settings.solveCaptcha,
                                 stealthConfig: settings.stealthConfig,
                                 optimizeBandwidth: settings.optimizeBandwidth,

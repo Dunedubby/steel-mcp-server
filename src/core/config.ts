@@ -23,6 +23,14 @@ export interface SteelConfig {
     apiKey: string | undefined;
     /** REST base URL with no trailing slash and no `/v1` suffix. */
     baseUrl: string;
+    /**
+     * Proxy every session this server creates is bound to, sent to Steel as `proxyUrl`
+     * (`scheme://user:pass@host:port`). Read from `STEEL_PROXY_URL`. For a self-hosted
+     * steel-browser this is the only way to give sessions a proxy: `useProxy` selects from
+     * Steel Cloud's pool, which a self-hosted deployment does not have, and steel-browser's
+     * own `PROXY_URL` is not applied to sessions. Undefined means the browser's own route.
+     */
+    proxyUrl: string | undefined;
     /** WebSocket origin for CDP connections. */
     connectUrl: string;
     deployment: Deployment;
@@ -145,6 +153,7 @@ export function loadConfig(env: Record<string, string | undefined>): SteelConfig
     return {
         apiKey,
         baseUrl,
+        proxyUrl: env.STEEL_PROXY_URL?.trim() || undefined,
         connectUrl: env.STEEL_CONNECT_URL ?? (deployment === 'cloud' ? CLOUD_CONNECT_URL : toWebSocketUrl(baseUrl)),
         deployment,
         profile: profileName as ProfileName,

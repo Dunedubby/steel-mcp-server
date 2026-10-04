@@ -63,6 +63,8 @@ export interface CreateSessionRequest {
     inactivityTimeout?: number | undefined;
     region?: string | undefined;
     useProxy?: boolean | { geolocation: { country: string } } | undefined;
+    /** A specific proxy for the session (`scheme://user:pass@host:port`); see SteelConfig.proxyUrl. */
+    proxyUrl?: string | undefined;
     solveCaptcha?: boolean | undefined;
     stealthConfig?: { autoCaptchaSolving: false } | undefined;
     optimizeBandwidth?: { blockImages: true; blockMedia: true; blockStylesheets: false } | undefined;
