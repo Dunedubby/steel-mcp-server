@@ -89,7 +89,11 @@ out
 
 # Nuxt.js build / generate output
 .nuxt
-dist
+# dist/ IS committed in this fork: it is installed straight from a GitHub
+# tarball (no build step on install) because npm 10.9's npx cannot build a
+# git dependency that has a prepare script ("GitFetcher requires an Arborist
+# constructor to pack a tarball"). Rebuild with `npm run build` before each
+# commit that touches src/.
 
 # MCPB staging tree and packed bundle
 build/
